@@ -933,7 +933,7 @@ ${nextLine}`);
         if (!list2.loose) {
           if (endsWithBlankLine) {
             list2.loose = true;
-          } else if (this.rules.other.doubleBlankLine.test(raw)) {
+          } else if (rawEndsWithBlankLine(raw)) {
             endsWithBlankLine = true;
           }
         }
@@ -959,7 +959,10 @@ ${nextLine}`);
         item.tokens = this.lexer.blockTokens(item.text, []);
         if (!list2.loose) {
           const spacers = item.tokens.filter((t) => t.type === "space");
-          const hasMultipleLineBreaks = spacers.length > 0 && spacers.some((t) => this.rules.other.anyLine.test(t.raw));
+          const hasMultipleLineBreaks = spacers.length > 0 && spacers.some((t) => {
+            const first = t.raw.indexOf("\n");
+            return first >= 0 && t.raw.indexOf("\n", first + 1) >= 0;
+          });
           list2.loose = hasMultipleLineBreaks;
         }
       }
@@ -1542,6 +1545,14 @@ function inlineTextLen(src, inlineHasAt) {
   if (emailStop >= 0) return emailStop;
   return n;
 }
+function rawEndsWithBlankLine(s) {
+  let i = s.length - 1;
+  while (i >= 0 && (s.charCodeAt(i) === 32 || s.charCodeAt(i) === 9)) i--;
+  if (i < 0 || s.charCodeAt(i) !== 10) return false;
+  i--;
+  while (i >= 0 && (s.charCodeAt(i) === 32 || s.charCodeAt(i) === 9)) i--;
+  return i >= 0 && s.charCodeAt(i) === 10;
+}
 
 // src/Lexer.ts
 var _Lexer = class __Lexer {
@@ -1656,7 +1667,7 @@ var _Lexer = class __Lexer {
       const canMarker = !this.options.pedantic && lead <= 3 && firstChar !== 9;
       if (token = this.tokenizer.space(src)) {
         src = src.substring(token.raw.length);
-        const lastToken = tokens.at(-1);
+        const lastToken = tokens[tokens.length - 1];
         if (token.raw.length === 1 && lastToken !== void 0) {
           lastToken.raw += "\n";
         } else {
@@ -1666,7 +1677,7 @@ var _Lexer = class __Lexer {
       }
       if (canCode && (token = this.tokenizer.code(src))) {
         src = src.substring(token.raw.length);
-        const lastToken = tokens.at(-1);
+        const lastToken = tokens[tokens.length - 1];
         if (lastToken?.type === "paragraph" || lastToken?.type === "text") {
           lastToken.raw += (lastToken.raw.endsWith("\n") ? "" : "\n") + token.raw;
           lastToken.text += "\n" + token.text;
@@ -1708,7 +1719,7 @@ var _Lexer = class __Lexer {
       }
       if (canMarker && firstChar === 91 && (token = this.tokenizer.def(src))) {
         src = src.substring(token.raw.length);
-        const lastToken = tokens.at(-1);
+        const lastToken = tokens[tokens.length - 1];
         if (lastToken?.type === "paragraph" || lastToken?.type === "text") {
           lastToken.raw += (lastToken.raw.endsWith("\n") ? "" : "\n") + token.raw;
           lastToken.text += "\n" + token.raw;
@@ -1750,7 +1761,7 @@ var _Lexer = class __Lexer {
         }
       }
       if (this.state.top && (token = this.tokenizer.paragraph(cutSrc))) {
-        const lastToken = tokens.at(-1);
+        const lastToken = tokens[tokens.length - 1];
         if (lastParagraphClipped && lastToken?.type === "paragraph") {
           lastToken.raw += (lastToken.raw.endsWith("\n") ? "" : "\n") + token.raw;
           lastToken.text += "\n" + token.text;
@@ -1765,7 +1776,7 @@ var _Lexer = class __Lexer {
       }
       if (token = this.tokenizer.text(src)) {
         src = src.substring(token.raw.length);
-        const lastToken = tokens.at(-1);
+        const lastToken = tokens[tokens.length - 1];
         if (lastToken?.type === "text") {
           lastToken.raw += (lastToken.raw.endsWith("\n") ? "" : "\n") + token.raw;
           lastToken.text += "\n" + token.text;
@@ -1841,6 +1852,8 @@ var _Lexer = class __Lexer {
     }
   }
   #tokenizeInlines(src, maskedSrc, tokens) {
+    const inlineExtensions = this.options.extensions?.inline;
+    const startInline = this.options.extensions?.startInline;
     let keepPrevChar = false;
     let prevChar = "";
     let srcLength = Infinity;
@@ -1856,7 +1869,7 @@ var _Lexer = class __Lexer {
       }
       keepPrevChar = false;
       let token;
-      if (this.options.extensions?.inline?.some((extTokenizer) => {
+      if (inlineExtensions?.some((extTokenizer) => {
         if (token = extTokenizer.call({ lexer: this }, src, tokens)) {
           src = src.substring(token.raw.length);
           tokens.push(token);
@@ -1884,7 +1897,7 @@ var _Lexer = class __Lexer {
       }
       if ((c === 91 || c === 33) && (token = this.tokenizer.reflink(src, this.tokens.links))) {
         src = src.substring(token.raw.length);
-        const lastToken = tokens.at(-1);
+        const lastToken = tokens[tokens.length - 1];
         if (token.type === "text" && lastToken?.type === "text") {
           lastToken.raw += token.raw;
           lastToken.text += token.text;
@@ -1924,11 +1937,11 @@ var _Lexer = class __Lexer {
         continue;
       }
       let cutSrc = src;
-      if (this.options.extensions?.startInline) {
+      if (startInline) {
         let startIndex = Infinity;
         const tempSrc = src.slice(1);
         let tempStart;
-        this.options.extensions.startInline.forEach((getStartIndex) => {
+        startInline.forEach((getStartIndex) => {
           tempStart = getStartIndex.call({ lexer: this }, tempSrc);
           if (typeof tempStart === "number" && tempStart >= 0) {
             startIndex = Math.min(startIndex, tempStart);
@@ -1940,11 +1953,12 @@ var _Lexer = class __Lexer {
       }
       if (token = this.tokenizer.inlineText(cutSrc)) {
         src = src.substring(token.raw.length);
-        if (token.raw.slice(-1) !== "_") {
-          prevChar = token.raw.slice(-1);
+        const lastCh = token.raw.slice(-1);
+        if (lastCh !== "_") {
+          prevChar = lastCh;
         }
         keepPrevChar = true;
-        const lastToken = tokens.at(-1);
+        const lastToken = tokens[tokens.length - 1];
         if (lastToken?.type === "text") {
           lastToken.raw += token.raw;
           lastToken.text += token.text;
@@ -1983,7 +1997,7 @@ var _Lexer = class __Lexer {
       };
       maskedSrc = maskedSrc.replace(reflinkSearch2, maskReflink);
     }
-    if (maskedSrc.includes("`") || maskedSrc.includes("\\")) {
+    if (maskedSrc.includes("\\") || hasMultiBacktickRun(maskedSrc)) {
       maskedSrc = maskedSrc.replace(this.tokenizer.rules.inline.anyPunctuationOutsideCode, (match0, code, punct) => {
         if (punct) {
           return "+".repeat(match0.length);
@@ -2030,6 +2044,16 @@ function tablePossible(src) {
 }
 function lheadingQuick(src) {
   return /\n {0,3}[=-]/.test(src);
+}
+function hasMultiBacktickRun(s) {
+  let i = s.indexOf("`");
+  while (i >= 0) {
+    let j = i + 1;
+    while (j < s.length && s.charCodeAt(j) === 96) j++;
+    if (j - i >= 2) return true;
+    i = s.indexOf("`", j);
+  }
+  return false;
 }
 
 // src/Renderer.ts
