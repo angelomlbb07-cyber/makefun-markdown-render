@@ -1457,18 +1457,91 @@ ${nextLine}`);
     }
   }
   inlineText(src) {
-    const cap = this.rules.inline.text.exec(src);
-    if (cap) {
-      const escaped = this.lexer.state.inRawBlock;
-      return {
-        type: "text",
-        raw: cap[0],
-        text: escaped ? cap[0] : decodeNumericCharacterReferences(cap[0]),
-        escaped
-      };
+    const len = inlineTextLen(src, this.lexer.state.inlineHasAt);
+    if (len <= 0) {
+      return;
     }
+    const raw = src.slice(0, len);
+    const escaped = this.lexer.state.inRawBlock;
+    return {
+      type: "text",
+      raw,
+      text: escaped ? raw : decodeNumericCharacterReferences(raw),
+      escaped
+    };
   }
 };
+var INLINE_STOP_RE = /[\\<!\[`*~_]|(?:[hH][tT][tT][pP][sS]?|[fF][tT][pP]:\/\/)|www\.|mailto:|xmpp:| {2,}\n/g;
+function isAlnum(c) {
+  return c >= 48 && c <= 57 || c >= 65 && c <= 90 || c >= 97 && c <= 122;
+}
+function isEmailLocalChar(c) {
+  return c >= 48 && c <= 57 || c >= 65 && c <= 90 || c >= 97 && c <= 122 || c === 33 || c === 35 || c === 36 || c === 37 || c === 38 || c === 39 || c === 42 || c === 43 || c === 45 || c === 46 || c === 47 || c === 61 || c === 63 || c === 94 || c === 95 || c === 96 || c === 123 || c === 124 || c === 125 || c === 126;
+}
+function inlineTextLen(src, inlineHasAt) {
+  const n = src.length;
+  if (n === 0) return 0;
+  if (n >= 2 && !isAlnum(src.charCodeAt(0)) && (src.startsWith("mailto:", 1) || src.startsWith("xmpp:", 1))) {
+    return 1;
+  }
+  let start = 1;
+  const c0 = src.charCodeAt(0);
+  if (c0 === 96 || c0 === 126) {
+    while (start < n && src.charCodeAt(start) === c0) start++;
+  }
+  let emailStop = -1;
+  if (inlineHasAt) {
+    let q = start;
+    while (q < n && isEmailLocalChar(src.charCodeAt(q))) q++;
+    if (q > start && q < n && src.charCodeAt(q) === 64) return start;
+    let ap = src.indexOf("@", start);
+    while (ap >= 0) {
+      let rs = ap;
+      while (rs > 0 && isEmailLocalChar(src.charCodeAt(rs - 1))) rs--;
+      if (rs > start) {
+        emailStop = rs;
+        break;
+      }
+      if (rs === start && ap > start) {
+        emailStop = start;
+        break;
+      }
+      ap = src.indexOf("@", ap + 1);
+    }
+  }
+  INLINE_STOP_RE.lastIndex = start;
+  let m;
+  while ((m = INLINE_STOP_RE.exec(src)) !== null) {
+    const pos = m.index;
+    const hit = m[0];
+    if (emailStop >= 0 && emailStop <= pos) return emailStop;
+    if (hit.length === 1) {
+      return pos;
+    }
+    if (hit.charCodeAt(0) === 32) {
+      if (pos > 0) return pos;
+      INLINE_STOP_RE.lastIndex = pos + 1;
+      continue;
+    }
+    if (hit === "www.") {
+      const prev = src.charCodeAt(pos - 1);
+      if (prev === 32 || prev === 9 || prev === 10 || prev === 13 || prev === 12 || prev === 11 || prev === 42 || prev === 95 || prev === 126 || prev === 40) {
+        return pos;
+      }
+      INLINE_STOP_RE.lastIndex = pos + 1;
+      continue;
+    }
+    if (hit === "mailto:" || hit === "xmpp:") {
+      if (pos - 1 >= start && !isAlnum(src.charCodeAt(pos - 1))) return pos;
+      INLINE_STOP_RE.lastIndex = pos + 1;
+      continue;
+    }
+    if (emailStop >= 0 && emailStop <= pos) return emailStop;
+    return pos;
+  }
+  if (emailStop >= 0) return emailStop;
+  return n;
+}
 
 // src/Lexer.ts
 var _Lexer = class __Lexer {
@@ -1491,6 +1564,7 @@ var _Lexer = class __Lexer {
       inRawBlock: false,
       linkEmitted: false,
       linkParenPossible: true,
+      inlineHasAt: false,
       top: true
     };
     const rules = {
@@ -1748,10 +1822,13 @@ var _Lexer = class __Lexer {
     this.tokenizer.lexer = this;
     const prevLinkParenPossible = this.state.linkParenPossible;
     this.state.linkParenPossible = prevLinkParenPossible && src.includes(")");
+    const prevInlineHasAt = this.state.inlineHasAt;
+    this.state.inlineHasAt = src.includes("@");
     try {
       return this.#inlineTokensInner(src, tokens);
     } finally {
       this.state.linkParenPossible = prevLinkParenPossible;
+      this.state.inlineHasAt = prevInlineHasAt;
     }
   }
   #inlineTokensInner(src, tokens) {
