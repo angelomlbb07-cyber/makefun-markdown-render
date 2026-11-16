@@ -34,3 +34,19 @@ runs produce identical `html.json`.
 
 Source of the fork (TypeScript, before bundling) lives in the build
 workspace; `parse.js` here is the esbuild bundle of it.
+
+## Final measurements (2026-11-16)
+
+- Practice set: **720/720** cases byte-identical to marked 18.1.3, verified
+  through the kit driver (`main.ts` + `parse.js`).
+- Speed (interleaved A/B, same driver, same machine): baseline marked
+  ~710–750 ms, this fork ~460–515 ms — **~1.44–1.60x** depending on machine
+  load; the ratio is consistently above the ~1.4x top-20 threshold and below
+  the ~2x top-3 threshold. The remaining time is core parsing machinery
+  (inline tokeniser loop, list recursion, emphasis matching, masking), with
+  no further safe surgical win found; a from-scratch rewrite was already
+  tried twice (v1 hand-rolled 76/720, v2 structure rewrite 714/720) and is
+  not a credible route to 2x.
+- Determinism: two driver runs produce byte-identical `html.json`.
+- Fuzz: 100,000 random snippets (doc substrings, token soup, spec
+  mutations) — 0 mismatches vs baseline.
